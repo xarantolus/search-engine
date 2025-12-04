@@ -1,0 +1,29 @@
+{
+	// Use IntelliSense to learn about possible attributes.
+	// Hover to view descriptions of existing attributes.
+	// For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Launch server",
+			"type": "go",
+			"request": "launch",
+			"mode": "auto",
+			"program": "${workspaceFolder}/indexer",
+			"cwd": "${workspaceFolder}/indexer",
+			"env": {
+				"MEILI_HOST": "http://localhost:7700",
+				"EXTRACTOR_HOST": "http://localhost:9999",
+				"TIKA_HOST": "http://localhost:9998",
+				"OPENAI_URL_PREFIX": "http://localhost:5000/",
+				"PORT": "8090",
+				"AI_SEARCH_DISABLE": "true"
+			},
+			"envFile": "${workspaceFolder}/.env",
+			"args": [
+				"-c",
+				"../config.yml"
+			]
+		}
+	]
+}

@@ -1,0 +1,12 @@
+--index-url https://pypi.org/simple
+
+# Install torch first to avoid dependency conflicts
+torch==2.6.0 --extra-index-url https://download.pytorch.org/whl/cpu
+sentence-transformers==4.0.1
+flask==3.1.0
+nltk==3.9.1
+transformers>=4.30.0
+numpy>=1.23.0
+waitress>=2.1.2
+# Only include xformers if you specifically need it
+# xformers>=0.0.29

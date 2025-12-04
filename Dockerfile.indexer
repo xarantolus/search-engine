@@ -1,0 +1,20 @@
+FROM golang:alpine AS builder
+WORKDIR /app
+COPY indexer/go.mod indexer/go.sum ./
+COPY shared/go.mod shared/go.sum ../shared/
+RUN --mount=type=cache,target=/go/pkg/mod \
+	go mod download -x
+COPY indexer/ .
+COPY shared/ ../shared/
+RUN --mount=type=cache,target=/root/.cache/go-build \
+	--mount=type=cache,target=/go/pkg/mod \
+	go build -v -o /app/indexer
+
+FROM alpine:latest
+RUN apk add --no-cache git \
+	samba-client cifs-utils git-lfs nfs-utils fuse-exfat exfat-utils ntfs-3g davfs2 \
+	poppler-utils
+RUN git lfs install && git config --global --add safe.directory '*'
+WORKDIR /app/
+COPY --from=builder /app/indexer .
+CMD ["./indexer"]

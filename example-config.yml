@@ -1,0 +1,185 @@
+app_name: "My Search Engine Name"
+# Meilisearch search index name.
+index_name: someorg
+
+# You can configure API keys for automatic tasks that use the search API
+api_keys:
+  - env_key: MY_CUSTOM_ENV_VAR
+    permission_groups:
+      - "Basic Access"
+      - "SOMEORG-Member"
+
+# Git logins work like this: if a repository URL matches the host,
+# the given environment variable is used get a token that is used for cloning.
+git_logins:
+  - host: gitlab.example.com
+    env_token: GITLAB_API_KEY
+
+# For files matching this pattern, text is extracted and indexed.
+# For all other files, only the filename and link is indexed.
+# An exception are files matching a known programming language. For these, comments are always indexed.
+# This could also just be set to "*" to try all file types - if text extraction fails, the file will still be indexed with just the filename and link.
+default_includes: "*.md,*.txt,*.rst,*.pdf,*.tex,*.docx,*.pptx,*.xlsx,*.odt,*.ods,*.odp,*.html,*.rtf,*.csv,*.epub,*.mobi,*.ppt,*.doc,*.xls,*.xps,*.odg,*.dotx,*.dot,*.key,*.pages,*.pub,*.chm,*.log,*.xml,*.json,*.yml,*.yaml,*.ini,*.cfg,*.inf,*.sql,*.db,*.sav,*.dat,*.tar,*.zip,*.rar,*.7z,*.gz,*.bz2,*.iso,*.djvu,*.dvi,*.ps,*.prc,*.lit,*.fb2,*.azw,*.azw3,*.ibooks,*.opf,*.lrf,*.abw,*.sxw,*.wpd,*.wps,*.gdoc,*.gsheet,*.gslides,*.texi,*.roff,*.man,*.t2t,*.scriv,*.org,*.docm,*.xlsm,*.pptm,*.png,*.jpg,*.jpeg,*.gif,*.bmp,*.tiff,*.tif,*.webp,*.svg,*.ico"
+
+
+# The maximum size that will be sent to Meilisearch. This ensures that large documents don't
+# cause search performance degradation. If a document is larger than this, it is still indexed,
+# but the rest of the content is cut off.
+max_document_size: 512_000
+
+# if set to <= 0, half the number of cpu threads is used
+parallel_jobs: 10
+# How many text extractions can happen at the same time per job - on slow machines, this should be set to 1
+text_workers: 8
+# Indexing jobs are derived from the mounts and repositories in the configuration file.
+# These jobs run with a specified interval. If none is given, the default interval is used.
+default_interval: 4h
+# How many documents need to be indexed before a commit is triggered.
+# Lower values lead to more frequent commits and overhead, but documents will be searchable faster.
+# Prefer higher values when indexing large network mounts
+min_commit: 250
+
+# Documents are deleted after they have not been seen for this amount of time
+delete_after_time: 336h # 14 days
+
+# Files are cached for mounts when they don't have "disable_cache: true" set.
+# This defines where the cache is stored.
+# Text extraction results are stored for all jobs in the text cache, which also needs a place.
+# Repos defines where git repositories are cloned to. If empty, the container temp directory is used.
+cache:
+  dir: /cache
+  text_dir: /text_cache
+  repos: /cache/repos
+
+# Permission groups are used to define who can see what.
+# Tags are used to define which mounts and repositories a group can search stuff in.
+# A user can be in multiple groups, and the permissions are combined/merged.
+permission_groups:
+  - name: "Basic Access"
+    default: true
+    tags:
+      - "SOMEORG-Gitlab"
+      - Public-Websites
+
+  - name: "SOMEORG-Member"
+    tags:
+      - "SOMEORG-NAS"
+      - "SOMEORG-Sharepoint"
+      - "SOMEORG-Gitlab"
+      - "SOMEORG-wiki"
+      - "SOMEORG-Gitlab-All"
+
+  - name: "FYC-NDA"
+    tags:
+      - "SOMEORG-Gitlab-FYC"
+
+# Numeric GitLab User ID of people who can access /admin, from https://gitlab.example.com/-/user_settings/profile
+admin_gitlab_ids:
+  - 37854
+
+# The following mounts are indexed and searched. Note that a mount does not *have* to have a command,
+# so just giving a directory that is externally mounted/synced is also possible.
+# Note that for mounting e.g. the nas.ads.mwn.de, one needs to be in their network / EduVPN.
+mounts:
+  # For a mount, the name becomes part of the resulting "Path", so in this case something at path "/tupe/war/my/file.txt" would be shown as "NAS/my/file.txt"
+  SOMEORG-NAS:
+    # The directory where the mount content is available
+    dir: /mnt/someorg-nas
+    # The mount command that can be run at the start to mount the directory
+    # Note that environment variables can be used either as "$VAR" or "${VAR}". Typical other shell syntax is *not* possible.
+    command: |
+      mount -t cifs //some-na.example.com/some/folder /mnt/someorg-nas -o 'username=${NAS_USER},password=${NAS_PW},nodfs,iocharset=utf8,ro'
+    # The URL transform is used to create a link to the file in the search results.
+    # Available are {:relative:} {:relative_query:} {:relative_url_path:} {:relative_url_path_with_slash:}
+    # Basically, if it's part of a URL query parameter, use {:relative_query:}, if part of a path, use {:relative_url_path_with_slash:}
+    url_transform:
+      https://some-na.example.com/Download.ashx?file={:relative_query:}
+    # Only files below this size are even downloaded. Files larger than that are put into the index so they are linked, but no text is extracted.
+    max_size: 100_000_000
+    permission_tag: "SOMEORG-NAS"
+
+  SOMEORG-Sharepoint:
+    dir: /onedrive_data/General
+    # Here we don't even add a command / leave it empty, as the directory is managed externally.
+    command: ""
+    max_size: 100_000_000
+    # Caching is unnecessary here, as the files are already synced to the local disk by another process.
+    disable_cache: true
+    # Since indexing is cheap (everything already downloaded), we do it a bit more often
+    interval: 15m
+    permission_tag: "SOMEORG-Sharepoint"
+
+
+gitlab_groups:
+  SOMEORG:
+    host: https://gitlab.example.com
+    id: 12098
+    scrape_issues: true
+    scrape_merge_requests: true
+    interval: 30m
+    permission_tag: "SOMEORG-Gitlab"
+
+    # All repos in this group + subgroups should be indexed
+    index_repos: true
+    # For these repos, the interval is set to 8 hours
+    index_repos_interval: 8h
+    # Glob pattern to select which repos should be indexed.
+    # It is matched on the full project path (e.g. "group/subgroup/projectname")
+    # If not specified, all repositories (except for excluded ones) are indexed.
+    index_repos_include: "*"
+    # Glob with same rules as above, but for excluding repositories.
+    # Exclude is always more important than the include pattern.
+    index_repos_exclude: "someorg/flyyourcircuit,*confidential*,*backup*"
+    index_repos_permission_tag: "SOMEORG-Gitlab-All"
+
+
+# Repositories can generate two different jobs: one for repository content (code files, comments, documentation, wiki etc.),
+# as well as issues and merge requests.
+# Note that for cloning, the git_logins are used to generate an oauth2:token auth URL for the given git host.
+# E.g. since we defined GITLAB_API_KEY for the host gitlab.example.com, its token is used for cloning.
+repositories:
+  # Again, the name here is the beginning of the slug/path in the search results.
+  someorg/somerepo:
+    # The URL of the repository - this is the only required field.
+    url: https://gitlab.example.com/someorg/somerepo.git
+    # If you want to git pull at a specific interval, you can set it here.
+    interval: 30m
+    permission_tag: "SOMEORG-Gitlab"
+
+  # For wikis, set the wiki flag to true. This changes how direct links to the files are generated.
+  # Also, since wikis don't have issues or merge requests, we have to disable indexing them.
+  someorg/wiki:
+    url: https://gitlab.example.com/someorg.wiki.git
+    wiki: true
+    ignore_issues_prs: true
+    interval: 10m
+    permission_tag: "SOMEORG-Gitlab"
+
+
+# Here you can define confluence spaces to index. The name given as yaml key is used as the beginning of the path in the search results.
+confluence:
+  "Custom Slug/More Path Elements":
+    space_key: MyConfluenceSpace
+    env_token: CONFLUCENCE_TOKEN
+    api_url: https://my-confluence.example.com
+    page_base_url: "https://my-confluence.example.com"
+    permission_tag: "SOMEORG-wiki"
+
+  # Could add more ...
+
+websites:
+  "SOMEORG-Website":
+    url: "https://someorg.example.com"
+    permission_tag: "Public-Websites"
+    interval: 24h
+
+# These are the synonyms that are used for the search. They are used in both directions,
+# so if you search for "CDH", you will also find "command and data handling".
+synonyms:
+ bidirectional:
+   CDH: command and data handling
+   SOTA: state-of-the-art
+
+# Maps from one to the other, but not back:
+ oneway:
+   "iphone": phone

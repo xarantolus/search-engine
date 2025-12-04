@@ -1,0 +1,156 @@
+networks:
+  internal_net:
+    internal: true
+  external_net:
+    driver: bridge
+
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.24
+    volumes:
+      - ./meili_data_vec:/meili_data:Z
+    restart: unless-stopped
+    environment:
+      - MEILI_LOG_LEVEL=WARN
+    env_file:
+      - .env
+    networks:
+      - internal_net
+    deploy:
+      resources:
+        limits:
+          memory: 32G
+
+  tika:
+    # Note: choose latest for basic extractors, latest-full tag for OCR features
+    image: apache/tika:latest-full
+    init: true
+    restart: unless-stopped
+    environment:
+      - JAVA_TOOL_OPTIONS=-Xmx16G -XX:+UseContainerSupport
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:9998/tika"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+    networks:
+      - internal_net
+
+  indexer:
+    image: ${CI_REGISTRY_IMAGE:-ghcr.io/xarantolus/search-engine}/indexer:${IMAGE_TAG:-latest}
+    build:
+      dockerfile: Dockerfile.indexer
+      context: .
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - meilisearch
+      - tika
+      - embedder
+    volumes:
+      - ./config.yml:/app/config.yml:z
+      - ./onedrive_data:/onedrive_data:z
+      - ./cache:/cache:Z
+      - ./repos:/repos:Z
+      - ./text_cache:/text_cache:Z
+    environment:
+      # If no embeddings provider is available, uncomment the next line
+      # - "AI_SEARCH_DISABLE=true"
+      - "MEILI_HOST=http://meilisearch:7700"
+      - "TIKA_HOST=http://tika:9998"
+      # Set the prefix to http://openai_local:5000/v1 for vLLM/LocalAI, or just the root path for infinity
+      - "OPENAI_URL_PREFIX=http://embedder:5000"
+    cap_add:
+      # Needs to mount network drives
+      - SYS_ADMIN
+    security_opt:
+      - apparmor=unconfined  # Disable AppArmor
+      - seccomp=unconfined   # Disable seccomp
+    networks:
+      - internal_net
+      - external_net
+
+  searcher:
+    image: ${CI_REGISTRY_IMAGE:-ghcr.io/xarantolus/search-engine}/searcher:${IMAGE_TAG:-latest}
+    build: .
+    ports:
+      - "8090:8090"
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - meilisearch
+      - tika
+      - indexer
+      - embedder
+    volumes:
+      - ./config.yml:/app/config.yml:z
+      - ./sessions:/sessions:Z
+    environment:
+      # If no embeddings provider is available, uncomment the next line
+      # - "AI_SEARCH_DISABLE=true"
+      - "MEILI_HOST=http://meilisearch:7700"
+      - "OPENAI_URL_PREFIX=http://embedder:5000"
+      - PORT=8090
+      - SESSIONS_DB=/sessions/fiber.db
+    networks:
+      - internal_net
+      - external_net
+
+  onedrive:
+    # login using docker run --rm -it -e ONEDRIVE_RUNAS_ROOT=1 -v $(pwd)/onedrive_conf:/onedrive/conf -v $(pwd)/onedrive_data:/onedrive/data -v $(pwd)/onedrive_login:/root/.config/onedrive -v $(pwd)/onedrive_etc:/etc/onedrive driveone/onedrive:edge --resync-auth
+    # Also, to sync shared business files, you have to add `sync_business_shared_items = "true"` to onedrive_login/config
+    image: driveone/onedrive:edge
+    restart: unless-stopped
+    environment:
+      - ONEDRIVE_RUNAS_ROOT=1
+    volumes:
+      - ./onedrive_conf:/onedrive/conf:Z
+      - ./onedrive_data:/onedrive/data:z
+      - ./onedrive_login:/root/.config/onedrive:Z
+      - ./onedrive_etc:/etc/onedrive:Z
+    command: [
+        "--skip-size", "100", # MB
+        "--syncdir", "/onedrive/data",
+        --sync-shared-files, # syncs sharepoint data
+        "--download-only", "--cleanup-local-files",
+        "--monitor",
+        "--resync-auth",
+    ]
+    # If our credentials run out, don't restart forever
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 2m
+        max_attempts: 3
+        window: 5m
+
+  embedder:
+    image: ${CI_REGISTRY_IMAGE:-ghcr.io/xarantolus/search-engine}/embedder:${IMAGE_TAG:-latest}
+    build:
+      context: embedder
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - MODEL_DIR=/models
+      - MODEL=Snowflake/snowflake-arctic-embed-l-v2.0
+    volumes:
+      - ./models:/models:cached
+    networks:
+      - internal_net
+      - external_net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+
+  #   # devices:
+  #   #   - /dev/dri:/dev/dri

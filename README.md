@@ -109,3 +109,6 @@ If there is a new Meilisearch version, it is possible that the index format is n
 
 Since text extraction is usually cached, only the reindexing of the content is required.
 Also, don't just update Meilisearch and assume the search tool will still work - likely, the client library needs to be updated as well.
+
+### [License](LICENSE)
+This is free as in freedom software. Do whatever you like with it.

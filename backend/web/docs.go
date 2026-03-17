@@ -2,7 +2,6 @@ package web
 
 import (
 	"shared/doc"
-	"slices"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -66,8 +65,7 @@ func (s *Server) getDocumentWithAuth(c *fiber.Ctx, fields []string, retrieveVect
 	if err != nil {
 		return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to fetch document: "+err.Error())
 	}
-	tags := s.Config.GetGroupsTags(user.PermissionGroups)
-	if len(tags) == 0 || !slices.Contains(tags, document.PermissionTag) {
+	if !s.Config.UserCanAccessTag(user.PermissionGroups, document.PermissionTag) {
 		// Return generic 404 to avoid leaking information
 		return nil, fiber.NewError(fiber.StatusNotFound)
 	}

@@ -80,6 +80,11 @@ func (c *Config) GetDefaultPermissionGroups() []string {
 	return names
 }
 
+// UserCanAccessTag returns true if any of the given permission groups grants access to tag.
+func (c *Config) UserCanAccessTag(permissionGroups []string, tag string) bool {
+	return slices.Contains(c.GetGroupsTags(permissionGroups), tag)
+}
+
 func (c *Config) GetGroupsTags(groupNames []string) []string {
 	var tags []string
 	for _, group := range c.PermissionGroups {

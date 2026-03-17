@@ -146,7 +146,7 @@ func (s *Server) Search(c *fiber.Ctx) (err error) {
 		if req.Offset == 0 {
 			d = new(SearchResult)
 			err = s.Index.GetDocument(docID, &meilisearch.DocumentQuery{
-				Fields: []string{"id", "url", "inFolderUrl", "content", "slug", "title", "lastModified", "isCode"},
+				Fields: []string{"id", "url", "inFolderUrl", "content", "slug", "title", "lastModified", "isCode", "permissionTag"},
 			}, d)
 			if err != nil {
 				if meiliErr, ok := err.(*meilisearch.Error); ok && meiliErr.StatusCode == 404 {
@@ -157,6 +157,11 @@ func (s *Server) Search(c *fiber.Ctx) (err error) {
 
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 					"error": "search backend error",
+				})
+			}
+			if !s.Config.UserCanAccessTag(permissionGroups, d.PermissionTag) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"error": "document not found",
 				})
 			}
 		}
@@ -279,6 +284,8 @@ type SearchResult struct {
 	Slug         string           `json:"slug"`
 	Title        string           `json:"title"`
 	URL          string           `json:"url"`
+
+	PermissionTag string `json:"permissionTag,omitempty"`
 }
 
 func (s *Server) processHits(hits meilisearch.Hits, query string, snippetLength int, maxParagraphs int) (result []SearchResult) {

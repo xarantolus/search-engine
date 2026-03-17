@@ -45,6 +45,13 @@ func (s *Server) Run() (err error) {
 		AppName: s.Config.AppName,
 	})
 
+	app.Use(func(c *fiber.Ctx) error {
+		c.Set("X-Content-Type-Options", "nosniff")
+		c.Set("X-Frame-Options", "DENY")
+		c.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		return c.Next()
+	})
+
 	// Auth related routes
 	app.Get("/login", s.LoginRoute)
 	app.Get("/callback", s.LoginCallback)

@@ -77,6 +77,16 @@ func (s *Server) AdminSetPermissions(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "User not found"})
 	}
 
+	validGroups := make(map[string]struct{}, len(s.Config.PermissionGroups))
+	for _, g := range s.Config.PermissionGroups {
+		validGroups[g.Name] = struct{}{}
+	}
+	for _, g := range data.PermissionGroups {
+		if _, ok := validGroups[g]; !ok {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "unknown permission group: " + g})
+		}
+	}
+
 	userInfo, err := s.UserInfo(c, data.UserID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})

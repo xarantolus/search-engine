@@ -22,13 +22,12 @@ Basically, the tool extracts text from all documents in these places, makes them
 
 ### 1. GitLab Application (login provider)
 Create an application with `read_api`, `read_user` and `openid` permission on GitLab (`https://gitlab.example.com/-/user_settings/applications`) (Preferences -> Applications -> Add new application).
-If your server will expose the service on `https://my-domain.example.com:8090`, you should add `https://my-domain.example.com:8090/callback` to the allowed URLs in the GitLab application configuration.
+If your server will expose the service on `https://search.example:8090`, you should add `https://search.example:8090/callback` to the allowed URLs in the GitLab application configuration.
 
 Then put the host info and credentials you get after creating the application into the `.env` file:
 
 ```
-# Gitlab instance
-HOST_EXTERNAL_URL=http://<url-to-my-server>:8090
+HOST_EXTERNAL_URL=http://<my-server-url>:8090
 GITLAB_INSTANCE_URL=https://<gitlab-instance-url>
 GITLAB_APPLICATION_ID=
 GITLAB_APPLICATION_SECRET=
@@ -50,7 +49,7 @@ MEILI_MASTER_KEY=
 GITLAB_API_KEY=glpat-...
 
 # GitLab OAuth settings. Explained in GitLab Application section in README
-HOST_EXTERNAL_URL=http://my-cool-search.example.com
+HOST_EXTERNAL_URL=http://search.example:8090
 GITLAB_INSTANCE_URL=https://gitlab.example.com
 GITLAB_APPLICATION_ID=
 GITLAB_APPLICATION_SECRET=
@@ -84,7 +83,7 @@ Then, we define permission groups that have multiple tags associated with them. 
 
 We can give one permission group to a user by default, so any newly logged in user has access to a few basic resources (e.g. repositories in the GitLab group that is required for loggin in).
 
-To edit user permissions, an admin user (those that have their numeric GitLab User ID in `admin_gitlab_ids` in the config) can go to `http://my.search.host:8090/admin` and edit permissions.
+To edit user permissions, an admin user (those that have their numeric GitLab User ID in `admin_gitlab_ids` in the config) can go to `http://search.example:8090/admin` and edit permissions.
 
 
 </details>

@@ -73,9 +73,36 @@ permission_groups:
     tags:
       - "SOMEORG-Gitlab-FYC"
 
+# Login provider. Pick one of:
+#   gitlab — existing flow, configured via env vars (see README).
+#   oidc   — generic OpenID Connect (e.g. FreeIPA via Keycloak). Uses the
+#            sub-block below.
+auth:
+  provider: gitlab
+  # oidc:
+  #   issuer_url: https://idp.example.com/realms/myrealm
+  #   client_id: search-engine
+  #   # Prefer reading the secret from an env var so it doesn't live in YAML:
+  #   env_client_secret: OIDC_CLIENT_SECRET
+  #   # Or set it inline (less safe):
+  #   # client_secret: ...
+  #   redirect_url: https://my-search.example.com/callback
+  #   # Plain group names as they appear in FreeIPA / Keycloak (NOT DNs).
+  #   # User must be in at least one of these to be allowed in.
+  #   allowed_groups:
+  #     - search-users
+  #   # Optional. Defaults to ["openid","profile","email","groups"] if unset.
+  #   # scopes: ["openid","profile","email","groups"]
+
 # Numeric GitLab User ID of people who can access /admin, from https://gitlab.example.com/-/user_settings/profile
+# Used when auth.provider is "gitlab".
 admin_gitlab_ids:
   - 37854
+
+# preferred_username values of OIDC users who can access /admin.
+# Used when auth.provider is "oidc". Ignored otherwise.
+# admin_users:
+#   - alice
 
 # The following mounts are indexed and searched. Note that a mount does not *have* to have a command,
 # so just giving a directory that is externally mounted/synced is also possible.

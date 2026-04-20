@@ -5,275 +5,184 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"slices"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	gitlab "gitlab.com/gitlab-org/api/client-go"
-	"golang.org/x/oauth2"
+	"github.com/gofiber/storage/sqlite3"
 )
 
-type UserInfo struct {
-	GitLabUserID     int64
-	DisplayName      string
-	PermissionGroups []string
-	IsAdmin          bool
+const (
+	// userInfoTTL is how long a per-user record lives in the FiberStore. The
+	// session cookie itself expires after 28 days; one year here is just so
+	// admin permission edits survive a user being away for a while without
+	// keeping forever-stale records around.
+	userInfoTTL = 365 * 24 * time.Hour
+
+	storeKeyUserKeys      = "user_keys"
+	storeKeyUserInfoFmt   = "user:%s"
+	localsKeyUserInfoCtx  = "user_info"
+	apiKeyQueryParam      = "apiKey"
+	apiKeyUserKey         = "apikey"
+	apiKeyUserDisplayName = "API User"
+)
+
+// UserIndex is a thin wrapper around the {seen-user-key -> []string} JSON
+// blob in the FiberStore. The previous implementation inlined the
+// read/append/JSON-marshal dance at every call site under a struct-level
+// mutex; this consolidates it. Auth providers persist seen users through it
+// so the admin UI can enumerate them.
+type UserIndex struct {
+	store *sqlite3.Storage
+	mu    sync.Mutex
 }
 
-func (s *Server) UserInfo(c *fiber.Ctx, idOverwrite ...int64) (ui UserInfo, err error) {
-	var permissionGroups []string
-
-	// Check if API key is present and valid
-	if adm, perm, err := s.Config.PermissionsForToken(c.Query("apiKey")); err == nil {
-		// Use API key to get permission groups
-		permissionGroups = perm
-		ui.PermissionGroups = permissionGroups
-		ui.IsAdmin = adm
-		ui.GitLabUserID = -1
-		ui.DisplayName = "API User"
-		return ui, nil
-	}
-
-	sess, err := s.Session.Get(c)
-	if err != nil {
-		return ui, err
-	}
-
-	var userid int64
-	if len(idOverwrite) > 0 {
-		userid = idOverwrite[0]
-	} else {
-		user_id, ok := sess.Get("gitlab_user_id").(int64)
-		if !ok {
-			return ui, fmt.Errorf("failed to get gitlab_user_id")
-		}
-		userid = user_id
-	}
-
-	userInfo, err := s.FiberStore.Get(fmt.Sprintf("user_info:%d", userid))
-	if err != nil {
-		return ui, fmt.Errorf("failed to get user_info:%d", userid)
-	}
-
-	err = json.Unmarshal(userInfo, &ui)
-	if err != nil {
-		return ui, fmt.Errorf("failed to unmarshal user_info:%d", userid)
-	}
-
-	ui.IsAdmin = slices.Contains(s.Config.AdminGitLabIDs, ui.GitLabUserID)
-
-	// Check if user has permission groups
-	if len(ui.PermissionGroups) == 0 {
-		return ui, fmt.Errorf("You are not permitted to view any files. Ask an administrator for access.")
-	}
-
-	return
+func NewUserIndex(store *sqlite3.Storage) *UserIndex {
+	return &UserIndex{store: store}
 }
 
-func (s *Server) AddLoggedInUser(c *fiber.Ctx, userInfo UserInfo) error {
-	sess, err := s.Session.Get(c)
+// Add records key as a seen user. It is a no-op if the key is already known.
+func (u *UserIndex) Add(key string) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	keys, err := u.listLocked()
 	if err != nil {
 		return err
 	}
-
-	userInfoBytes, err := json.Marshal(userInfo)
+	for _, k := range keys {
+		if k == key {
+			return nil
+		}
+	}
+	keys = append(keys, key)
+	bytes, err := json.Marshal(keys)
 	if err != nil {
 		return err
 	}
-
-	err = s.FiberStore.Set(fmt.Sprintf("user_info:%d", userInfo.GitLabUserID), userInfoBytes, 100*365*24*time.Hour)
-	if err != nil {
-		return err
-	}
-
-	sess.Set("gitlab_user_id", userInfo.GitLabUserID)
-
-	// Now also add it globally, so the admin UI knows who is logged in
-	s.fiberStoreLock.Lock()
-	defer s.fiberStoreLock.Unlock()
-
-	var userids []int64
-	bytes, err := s.FiberStore.Get("user_ids")
-	if err != nil {
-		log.Println("Error getting user_ids:", err)
-	}
-	err = json.Unmarshal(bytes, &userids)
-	if err != nil {
-		log.Println("Error unmarshalling user_ids:", err)
-	}
-
-	if !slices.Contains(userids, userInfo.GitLabUserID) {
-		userids = append(userids, userInfo.GitLabUserID)
-		bytes, err = json.Marshal(userids)
-		if err != nil {
-			return err
-		}
-
-		err = s.FiberStore.Set("user_ids", bytes, 100*365*24*time.Hour)
-		if err != nil {
-			return c.SendStatus(fiber.StatusInternalServerError)
-		}
-	}
-
-	return sess.Save()
+	return u.store.Set(storeKeyUserKeys, bytes, userInfoTTL)
 }
 
+// List returns every user key that has ever been recorded by Add. Order is
+// insertion order.
+func (u *UserIndex) List() ([]string, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.listLocked()
+}
+
+func (u *UserIndex) listLocked() ([]string, error) {
+	bytes, err := u.store.Get(storeKeyUserKeys)
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes) == 0 {
+		return nil, nil
+	}
+	var keys []string
+	if err := json.Unmarshal(bytes, &keys); err != nil {
+		// Stale / pre-migration data. Don't propagate; let the next Add
+		// overwrite. (Same forgiving behaviour the old code had.)
+		log.Printf("user_keys: ignoring unreadable index: %v", err)
+		return nil, nil
+	}
+	return keys, nil
+}
+
+// userInfoStoreKey returns the FiberStore key under which a UserInfo blob
+// is persisted for the given UserKey.
+func userInfoStoreKey(userKey string) string {
+	return fmt.Sprintf(storeKeyUserInfoFmt, userKey)
+}
+
+// UserInfo returns the identity for the current request.
+//
+// The lookup priority is:
+//  1. cached UserInfo on c.Locals (avoids double FiberStore hits when the
+//     middleware and the handler both ask)
+//  2. API key short-circuit: a valid ?apiKey= grants the permission groups
+//     and admin flag bound to that key, with a synthetic UserKey
+//  3. delegation to the configured AuthProvider, which knows its own
+//     session shape
+//
+// keyOverride bypasses the cache and the API-key short-circuit; it's used by
+// the admin UI to look up other users.
+func (s *Server) UserInfo(c *fiber.Ctx, keyOverride ...string) (UserInfo, error) {
+	if len(keyOverride) == 0 {
+		if cached, ok := c.Locals(localsKeyUserInfoCtx).(UserInfo); ok {
+			return cached, nil
+		}
+		if adm, perm, err := s.Config.PermissionsForToken(c.Query(apiKeyQueryParam)); err == nil {
+			info := UserInfo{
+				UserKey:          apiKeyUserKey,
+				DisplayName:      apiKeyUserDisplayName,
+				PermissionGroups: perm,
+				IsAdmin:          adm,
+			}
+			c.Locals(localsKeyUserInfoCtx, info)
+			return info, nil
+		}
+	}
+
+	info, err := s.Auth.UserInfo(c, keyOverride...)
+	if err != nil {
+		return info, err
+	}
+	if len(info.PermissionGroups) == 0 {
+		return info, fmt.Errorf("You are not permitted to view any files. Ask an administrator for access.")
+	}
+	if len(keyOverride) == 0 {
+		c.Locals(localsKeyUserInfoCtx, info)
+	}
+	return info, nil
+}
+
+// LoginMiddleware gates every route except the login flow itself (which is
+// registered on the router before this middleware, so requests to /login or
+// /callback never reach here).
 func (s *Server) LoginMiddleware(c *fiber.Ctx) error {
-	if c.Path() == "/login" || c.Path() == "/callback" {
-		return c.Next()
-	}
-
-	var reject = func() error {
+	reject := func() error {
 		if strings.HasPrefix(c.Path(), "/api") {
 			return c.SendStatus(fiber.StatusUnauthorized)
 		}
-
 		return c.Redirect(fmt.Sprintf("/login?redirect=%s", url.QueryEscape(c.Path())))
 	}
 
-	key := c.Query("apiKey")
-	if key == "" {
-		sess, err := s.Session.Get(c)
-		if err != nil || sess.Get("gitlab_user_id") == nil {
-			return reject()
+	if key := c.Query(apiKeyQueryParam); key != "" {
+		if _, _, err := s.Config.PermissionsForToken(key); err == nil {
+			return c.Next()
 		}
-	} else {
-		// Check API key
-		_, _, err := s.Config.PermissionsForToken(key)
-		if err != nil {
-			return reject()
-		}
+		return reject()
 	}
 
-	if err := c.Next(); err != nil {
-		return err
+	if !s.Auth.IsLoggedIn(c) {
+		return reject()
 	}
-
-	return nil
+	return c.Next()
 }
 
-func (s *Server) LoginRoute(c *fiber.Ctx) error {
-	// Get the redirect path from the query parameter
-	redirectPath := c.Query("redirect", "")
-	if redirectPath == "/" || redirectPath == "/login" || redirectPath == "/callback" {
-		redirectPath = ""
-	}
-
-	// Generate the OAuth2 login URL with the state parameter
-	state := url.QueryEscape(redirectPath)
-	authURL := s.OauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
-
-	// Store the state in the session for validation
-	sess, err := s.Session.Get(c)
-	if err != nil {
-		log.Println("Error getting session:", err)
-		return c.SendStatus(fiber.StatusInternalServerError)
-	}
-	sess.Set("oauth_state", state)
-	if err := sess.Save(); err != nil {
-		log.Println("Error saving session:", err)
-		return c.SendStatus(fiber.StatusInternalServerError)
-	}
-
-	return c.Redirect(authURL)
-}
-
-func (s *Server) LoginCallback(c *fiber.Ctx) error {
-	code := c.Query("code")
-	if code == "" {
-		return fmt.Errorf("no code in query")
-	}
-
-	// Validate the state parameter
-	state := c.Query("state")
-	sess, err := s.Session.Get(c)
-	if err != nil {
-		log.Println("Error getting session:", err)
-		return c.SendStatus(fiber.StatusInternalServerError)
-	}
-	savedState := sess.Get("oauth_state")
-	if savedState == nil || savedState != state {
-		return c.SendStatus(fiber.StatusForbidden)
-	}
-
-	token, err := s.OauthConfig.Exchange(c.Context(), code)
-	if err != nil {
-		return fmt.Errorf("failed to exchange code: %w", err)
-	}
-
-	gitlabClient, err := gitlab.NewOAuthClient(token.AccessToken, gitlab.WithBaseURL(s.GitLab.GitLabBaseURL.String()))
-	if err != nil {
-		return fmt.Errorf("failed to create gitlab client: %w", err)
-	}
-
-	gitlabUser, _, err := gitlabClient.Users.CurrentUser(gitlab.WithContext(c.Context()))
-	if err != nil {
-		return fmt.Errorf("failed to get logged in gitlab user info: %w", err)
-	}
-
-	groupMember, _, err := gitlabClient.GroupMembers.GetGroupMember(strconv.FormatInt(s.GitLab.AllowedGitLabGroupID, 10), gitlabUser.ID, nil)
-	if err != nil {
-		return fmt.Errorf("failed to get group member info: %w", err)
-	}
-
-	if groupMember.AccessLevel == gitlab.NoPermissions {
-		return c.SendStatus(fiber.StatusForbidden)
-	}
-
-	sess.Set("gitlab_user_id", int64(gitlabUser.ID))
-
-	// See if we already have this user so we keep their permissions
-	userInfo, err := s.UserInfo(c, int64(gitlabUser.ID))
-	if err != nil {
-		userInfo.GitLabUserID = int64(gitlabUser.ID)
-		userInfo.PermissionGroups = s.Config.GetDefaultPermissionGroups()
-	}
-	userInfo.DisplayName = gitlabUser.Name
-
-	err = s.AddLoggedInUser(c, userInfo)
-	if err != nil {
-		return fmt.Errorf("failed to add logged in user: %w", err)
-	}
-	if err := sess.Save(); err != nil {
-		log.Println("Error saving session:", err)
-		return c.SendStatus(fiber.StatusInternalServerError)
-	}
-
-	state, _ = url.QueryUnescape(state)
-	if state == "" || !isValidRedirectPath(state) {
-		state = "/"
-	}
-
-	return c.Redirect(state)
-}
-
-func isValidRedirectPath(path string) bool {
-	// Parse the URL to check if it is absolute
-	parsedURL, err := url.Parse(path)
-	if err != nil {
-		return false
-	}
-
-	// Ensure the URL is not absolute and does not contain suspicious characters
-	if parsedURL.IsAbs() || strings.Contains(path, "//") || strings.Contains(path, "..") {
-		return false
-	}
-
-	return true
-}
-
+// LogoutRoute clears the session cookie. Per-user records in FiberStore are
+// left in place so admin permission edits survive a logout/login cycle.
 func (s *Server) LogoutRoute(c *fiber.Ctx) error {
 	sess, err := s.Session.Get(c)
 	if err != nil {
 		log.Println("Error getting session:", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-
 	if err := sess.Destroy(); err != nil {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-
 	return c.SendString("Logged out")
+}
+
+func isValidRedirectPath(path string) bool {
+	parsedURL, err := url.Parse(path)
+	if err != nil {
+		return false
+	}
+	if parsedURL.IsAbs() || strings.Contains(path, "//") || strings.Contains(path, "..") {
+		return false
+	}
+	return true
 }

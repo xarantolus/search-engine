@@ -35,6 +35,9 @@ type Config struct {
 
 	PermissionGroups []PermissionGroup `yaml:"permission_groups"`
 	AdminGitLabIDs   []int64           `yaml:"admin_gitlab_ids"`
+	AdminUsers       []string          `yaml:"admin_users"`
+
+	Auth Auth `yaml:"auth"`
 
 	MaxDocumentSize    int           `yaml:"max_document_size"`
 	ParallelJobs       int           `yaml:"parallel_jobs"`
@@ -42,6 +45,101 @@ type Config struct {
 	DefaultJobInterval time.Duration `yaml:"default_interval"`
 	MinCommit          int           `yaml:"min_commit"`
 	DeleteAfterTime    time.Duration `yaml:"delete_after_time"`
+}
+
+// Auth selects and configures the login provider.
+//
+// Provider must be one of:
+//   - "gitlab" (default; existing GitLab OAuth flow, configured via env vars
+//     consumed by GitLabFromEnv)
+//   - "oidc" (generic OpenID Connect, e.g. FreeIPA via Keycloak; configured
+//     via the OIDC sub-block below)
+type Auth struct {
+	Provider string   `yaml:"provider"`
+	OIDC     AuthOIDC `yaml:"oidc"`
+}
+
+const (
+	AuthProviderGitLab = "gitlab"
+	AuthProviderOIDC   = "oidc"
+)
+
+// AuthOIDC configures the generic OpenID Connect provider.
+//
+// AllowedGroups are matched against the "groups" claim of the ID token (or,
+// failing that, the userinfo endpoint). The user must be a member of at least
+// one. Group entries are plain names (e.g. "search-users"), not DNs.
+//
+// ClientSecret is read from EnvClientSecret if set, otherwise from the inline
+// ClientSecret field. Prefer the env variant so secrets stay out of YAML.
+type AuthOIDC struct {
+	IssuerURL       string   `yaml:"issuer_url"`
+	ClientID        string   `yaml:"client_id"`
+	ClientSecret    string   `yaml:"client_secret"`
+	EnvClientSecret string   `yaml:"env_client_secret"`
+	RedirectURL     string   `yaml:"redirect_url"`
+	AllowedGroups   []string `yaml:"allowed_groups"`
+	Scopes          []string `yaml:"scopes"`
+}
+
+// validateAuth normalizes Auth defaults and rejects misconfigurations.
+//
+// It mutates c (defaulting Provider to "gitlab", filling in default OIDC
+// scopes, resolving EnvClientSecret) and returns an error if the resulting
+// config is unusable for the selected provider.
+func (c *Config) validateAuth() error {
+	if c.Auth.Provider == "" {
+		c.Auth.Provider = AuthProviderGitLab
+	}
+
+	switch c.Auth.Provider {
+	case AuthProviderGitLab:
+		// GitLab-specific environment is read in main.go via GitLabFromEnv.
+		// We still warn about the silent-misconfig case where only the
+		// OIDC-side admin list is populated.
+		if len(c.AdminGitLabIDs) == 0 && len(c.AdminUsers) > 0 {
+			return fmt.Errorf("auth.provider %q uses admin_gitlab_ids, but only admin_users is set", c.Auth.Provider)
+		}
+	case AuthProviderOIDC:
+		o := &c.Auth.OIDC
+		if o.IssuerURL == "" {
+			return fmt.Errorf("auth.oidc.issuer_url is required when auth.provider is %q", AuthProviderOIDC)
+		}
+		if _, err := url.ParseRequestURI(o.IssuerURL); err != nil {
+			return fmt.Errorf("auth.oidc.issuer_url is not a valid URL: %w", err)
+		}
+		if o.ClientID == "" {
+			return fmt.Errorf("auth.oidc.client_id is required when auth.provider is %q", AuthProviderOIDC)
+		}
+		if o.RedirectURL == "" {
+			return fmt.Errorf("auth.oidc.redirect_url is required when auth.provider is %q", AuthProviderOIDC)
+		}
+		if _, err := url.ParseRequestURI(o.RedirectURL); err != nil {
+			return fmt.Errorf("auth.oidc.redirect_url is not a valid URL: %w", err)
+		}
+		if len(o.AllowedGroups) == 0 {
+			return fmt.Errorf("auth.oidc.allowed_groups must list at least one group when auth.provider is %q", AuthProviderOIDC)
+		}
+		if o.EnvClientSecret != "" {
+			secret := os.Getenv(o.EnvClientSecret)
+			if secret == "" {
+				return fmt.Errorf("auth.oidc.env_client_secret %q is not set in the environment", o.EnvClientSecret)
+			}
+			o.ClientSecret = secret
+		}
+		if o.ClientSecret == "" {
+			return fmt.Errorf("auth.oidc.client_secret (or env_client_secret) is required when auth.provider is %q", AuthProviderOIDC)
+		}
+		if len(o.Scopes) == 0 {
+			o.Scopes = []string{"openid", "profile", "email", "groups"}
+		}
+		if len(c.AdminUsers) == 0 && len(c.AdminGitLabIDs) > 0 {
+			return fmt.Errorf("auth.provider %q uses admin_users, but only admin_gitlab_ids is set", c.Auth.Provider)
+		}
+	default:
+		return fmt.Errorf("auth.provider %q is not supported (use %q or %q)", c.Auth.Provider, AuthProviderGitLab, AuthProviderOIDC)
+	}
+	return nil
 }
 
 type APIKey struct {
@@ -404,6 +502,10 @@ func Parse(configPath string) (c Config, err error) {
 		if _, ok := usedPermissionTags[tag]; !ok {
 			return Config{}, fmt.Errorf("permission tag %q is not used by any indexing job", tag)
 		}
+	}
+
+	if err := c.validateAuth(); err != nil {
+		return Config{}, err
 	}
 
 	// Set up synonyms

@@ -1,7 +1,6 @@
 package web
 
 import (
-	"encoding/json"
 	"log"
 	"slices"
 
@@ -19,20 +18,14 @@ func (s *Server) AdminListPermissions(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "You are not an admin"})
 	}
 
-	// Find all user IDs
-	var userids []int64
-	bytes, err := s.FiberStore.Get("user_ids")
+	userKeys, err := s.Auth.ListUserKeys()
 	if err != nil {
-		log.Println("Error getting user_ids:", err)
-	}
-	err = json.Unmarshal(bytes, &userids)
-	if err != nil {
-		log.Println("Error unmarshalling user_ids:", err)
+		log.Println("Error getting user keys:", err)
 	}
 
 	var userInfos []UserInfo
-	for _, userid := range userids {
-		info, err := s.UserInfo(c, userid)
+	for _, key := range userKeys {
+		info, err := s.UserInfo(c, key)
 		if err != nil {
 			log.Println("Error getting user info:", err)
 			continue
@@ -54,26 +47,21 @@ func (s *Server) AdminSetPermissions(c *fiber.Ctx) error {
 	}
 
 	var data struct {
-		UserID           int64    `json:"user_id"`
+		UserID           string   `json:"user_id"`
 		PermissionGroups []string `json:"permission_groups"`
 	}
-	err = c.BodyParser(&data)
-	if err != nil {
+	if err := c.BodyParser(&data); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
-
-	// Find all user IDs
-	var userids []int64
-	bytes, err := s.FiberStore.Get("user_ids")
-	if err != nil {
-		log.Println("Error getting user_ids:", err)
-	}
-	err = json.Unmarshal(bytes, &userids)
-	if err != nil {
-		log.Println("Error unmarshalling user_ids:", err)
+	if data.UserID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user_id is required"})
 	}
 
-	if !slices.Contains(userids, data.UserID) {
+	userKeys, err := s.Auth.ListUserKeys()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if !slices.Contains(userKeys, data.UserID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "User not found"})
 	}
 
@@ -94,8 +82,7 @@ func (s *Server) AdminSetPermissions(c *fiber.Ctx) error {
 
 	userInfo.PermissionGroups = data.PermissionGroups
 
-	err = s.AddLoggedInUser(c, userInfo)
-	if err != nil {
+	if err := s.Auth.SaveUser(c, userInfo); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 

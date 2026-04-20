@@ -9,7 +9,6 @@ import (
 	"shared/config"
 	"shared/embedding"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -17,7 +16,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/gofiber/storage/sqlite3"
 	"github.com/meilisearch/meilisearch-go"
-	"golang.org/x/oauth2"
 )
 
 type Server struct {
@@ -29,15 +27,10 @@ type Server struct {
 
 	Index meilisearch.IndexManager
 
-	GitLab config.GitLabInfo
+	FiberStore *sqlite3.Storage
+	Session    *session.Store
 
-	// This lock is used when we do larger changes (e.g. on user signup/login),
-	// as we store all user IDs in a string (lmao).
-	fiberStoreLock sync.RWMutex
-	FiberStore     *sqlite3.Storage
-
-	Session     *session.Store
-	OauthConfig *oauth2.Config
+	Auth AuthProvider
 }
 
 func (s *Server) Run() (err error) {
@@ -53,8 +46,8 @@ func (s *Server) Run() (err error) {
 	})
 
 	// Auth related routes
-	app.Get("/login", s.LoginRoute)
-	app.Get("/callback", s.LoginCallback)
+	app.Get("/login", s.Auth.LoginRoute)
+	app.Get("/callback", s.Auth.LoginCallback)
 
 	app.Use(s.LoginMiddleware)
 	app.Get("/logout", s.LogoutRoute)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -18,7 +19,6 @@ import (
 	"github.com/meilisearch/meilisearch-go"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
-	"golang.org/x/oauth2"
 )
 
 func main() {
@@ -42,11 +42,6 @@ func main() {
 	}
 
 	client := meilisearch.New(meiliHost, meilisearch.WithAPIKey(meiliAPIKey), meilisearch.WithCustomClient(httpClient))
-
-	gitlabInfo, err := config.GitLabFromEnv()
-	if err != nil {
-		log.Fatalf("Failed to get GitLab info from environment: %v", err)
-	}
 
 	log.Printf("Checking index %q...", cfg.IndexName)
 
@@ -89,20 +84,9 @@ func main() {
 		CookieHTTPOnly: true,
 	})
 
-	var resolve = func(base *url.URL, path string) string {
-		return base.ResolveReference(&url.URL{Path: path}).String()
-	}
-
-	var oauthConfig = &oauth2.Config{
-		ClientID:     gitlabInfo.GitLabApplicationID,
-		ClientSecret: gitlabInfo.GitLabApplicationSecret,
-		RedirectURL:  resolve(gitlabInfo.HostExternalURL, "/callback"),
-		Scopes:       []string{"read_user", "openid", "read_api"},
-		Endpoint: oauth2.Endpoint{
-			AuthURL:       resolve(gitlabInfo.GitLabBaseURL, "/oauth/authorize"),
-			TokenURL:      resolve(gitlabInfo.GitLabBaseURL, "/oauth/token"),
-			DeviceAuthURL: resolve(gitlabInfo.GitLabBaseURL, "/oauth/device/code"),
-		},
+	authProvider, err := buildAuthProvider(&cfg, sessionStore, fiberStore)
+	if err != nil {
+		log.Fatalf("Failed to set up auth provider: %v", err)
 	}
 
 	useAISearch := os.Getenv("AI_SEARCH_DISABLE") != "true"
@@ -151,18 +135,39 @@ func main() {
 	serverLogger.SetPrefix("[Server] ")
 
 	server := &web.Server{
-		Logger:      serverLogger,
-		Port:        uint16(serverPort),
-		Config:      cfg,
-		Index:       index,
-		GitLab:      gitlabInfo,
-		Session:     sessionStore,
-		OauthConfig: oauthConfig,
-		FiberStore:  fiberStore,
-		Embedder:    embedConfig,
+		Logger:     serverLogger,
+		Port:       uint16(serverPort),
+		Config:     cfg,
+		Index:      index,
+		Session:    sessionStore,
+		FiberStore: fiberStore,
+		Embedder:   embedConfig,
+		Auth:       authProvider,
 	}
 
 	if err := server.Run(); err != nil {
 		log.Fatalf("Failed to run web server: %v", err)
+	}
+}
+
+// buildAuthProvider picks the auth backend based on cfg.Auth.Provider.
+// GitLab credentials still come from the environment (via GitLabFromEnv),
+// matching the existing deployment story; OIDC credentials are read from
+// config (with the secret optionally indirected through env).
+func buildAuthProvider(cfg *config.Config, sessionStore *session.Store, fiberStore *sqlite3.Storage) (web.AuthProvider, error) {
+	users := web.NewUserIndex(fiberStore)
+	switch cfg.Auth.Provider {
+	case config.AuthProviderGitLab:
+		gitlabInfo, err := config.GitLabFromEnv()
+		if err != nil {
+			return nil, err
+		}
+		return web.NewGitLabAuth(cfg, gitlabInfo, sessionStore, fiberStore, users), nil
+	case config.AuthProviderOIDC:
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return web.NewOIDCAuth(ctx, cfg, sessionStore, fiberStore, users)
+	default:
+		return nil, fmt.Errorf("auth provider %q is not supported", cfg.Auth.Provider)
 	}
 }

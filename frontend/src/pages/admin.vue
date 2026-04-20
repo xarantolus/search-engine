@@ -5,19 +5,19 @@ const loading = ref(false)
 const error = ref('')
 const state = ref<any>(null)
 
-const checkedPermissions = ref<{ [userId: number]: { [permName: string]: boolean } }>({})
+const checkedPermissions = ref<{ [userKey: string]: { [permName: string]: boolean } }>({})
 
 function initPermissions() {
 	if (!state.value) return
 	state.value.users.forEach((user: any) => {
-		checkedPermissions.value[user.GitLabUserID] = {}
+		checkedPermissions.value[user.UserKey] = {}
 		state.value.permissions.forEach((perm: any) => {
-			checkedPermissions.value[user.GitLabUserID][perm.Name] = user.PermissionGroups?.includes(perm.Name)
+			checkedPermissions.value[user.UserKey][perm.Name] = user.PermissionGroups?.includes(perm.Name)
 		})
 	})
 }
 
-async function onPermissionChange(userId: number) {
+async function onPermissionChange(userId: string) {
 	// Gather all checked names for the user
 	const newGroups = Object.entries(checkedPermissions.value[userId])
 		.filter(([_, isChecked]) => isChecked)
@@ -121,10 +121,10 @@ async function deleteDocument() {
 						</tr>
 					</thead>
 					<tbody>
-						<tr v-for="user in state.users" :key="user.GitLabUserID">
+						<tr v-for="user in state.users" :key="user.UserKey">
 							<td>{{ user.DisplayName }}</td>
 							<td v-for="perm in state.permissions" :key="perm.Name">
-								<input type="checkbox" v-model="checkedPermissions[user.GitLabUserID][perm.Name]" @change="onPermissionChange(user.GitLabUserID)" />
+								<input type="checkbox" v-model="checkedPermissions[user.UserKey][perm.Name]" @change="onPermissionChange(user.UserKey)" />
 							</td>
 						</tr>
 					</tbody>

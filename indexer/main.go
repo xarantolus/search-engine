@@ -249,6 +249,38 @@ func main() {
 		})
 	}
 
+	for name, org := range cfg.GiteaOrgs {
+		if !(org.ScrapeIssues || org.ScrapePullRequests) {
+			continue
+		}
+		scraperJobs = append(scraperJobs, &scrapers.ScrapeGiteaOrgJob{
+			Name:   name,
+			Org:    org,
+			Index:  client.Index(cfg.IndexName),
+			Config: &cfg,
+			IntervalHelper: scrapers.IntervalHelper{
+				Interval: org.Interval,
+			},
+			Embedder: embedConfig,
+		})
+	}
+
+	for name, org := range cfg.GithubOrgs {
+		if !(org.ScrapeIssues || org.ScrapePullRequests) {
+			continue
+		}
+		scraperJobs = append(scraperJobs, &scrapers.ScrapeGithubOrgJob{
+			Name:   name,
+			Org:    org,
+			Index:  client.Index(cfg.IndexName),
+			Config: &cfg,
+			IntervalHelper: scrapers.IntervalHelper{
+				Interval: org.Interval,
+			},
+			Embedder: embedConfig,
+		})
+	}
+
 	for name, repo := range cfg.Repositories {
 		scraperJobs = append(scraperJobs, &scrapers.ScrapeGitJob{
 			Name:       name,
@@ -360,6 +392,12 @@ func main() {
 				continue
 			}
 
+			// Only GitLab jobs populate GitLabID; gitea/github jobs set
+			// Forge and carry no numeric project ID.
+			if gitlabJob.Forge != "" && gitlabJob.Forge != scrapers.ForgeGitLab {
+				continue
+			}
+
 			if gitlabJob.GitLabID == 0 {
 				panic("GitLabID is 0 - should have been set by setup")
 			}
@@ -449,8 +487,111 @@ func main() {
 		}
 	}
 
+	// Auto-discover repositories in configured Gitea orgs.
+	for name, org := range cfg.GiteaOrgs {
+		if !org.IndexRepos {
+			continue
+		}
+
+		gc, err := scrapers.GiteaClientFromURL(&cfg, org.Host)
+		if err != nil {
+			log.Fatalf("Failed to create Gitea client for %q: %v", name, err)
+		}
+
+		repos, err := scrapers.ListGiteaOwnerRepos(gc, org.Owner, org.IsUser)
+		if err != nil {
+			log.Fatalf("Failed to list Gitea repos for %q: %v", name, err)
+		}
+
+		log.Printf("Checking jobs for %d repos found in Gitea org %q", len(repos), name)
+
+		for _, repo := range repos {
+			repoPath := repo.Owner.UserName + "/" + repo.Name
+
+			if len(org.IndexReposExcludeGlob) > 0 && scrapers.AnyGlobMatches(org.IndexReposExcludeGlob, repoPath) {
+				log.Printf("Skipping %q due to index_repos_exclude match", repoPath)
+				continue
+			}
+			if len(org.IndexReposIncludeGlob) > 0 && !scrapers.AnyGlobMatches(org.IndexReposIncludeGlob, repoPath) {
+				log.Printf("Skipping %q as it is not in index_repos_include match", repoPath)
+				continue
+			}
+
+			// Issues/PRs for discovered repos are already covered by
+			// ScrapeGiteaOrgJob above; here we only add the clone-and-index
+			// side, so IgnoreIssuesPRs is forced to true.
+			scraperJobs = append(scraperJobs, &scrapers.ScrapeGitJob{
+				Name:  repoPath,
+				Forge: scrapers.ForgeGitea,
+				Repo: config.Repository{
+					URL:             repo.CloneURL,
+					IgnoreIssuesPRs: true,
+					IsWiki:          false,
+					Interval:        org.IndexReposInterval,
+					PermissionTag:   scrapers.Cascade(org.IndexReposPermissionTagOverride, org.PermissionTag),
+				},
+				Index:      client.Index(cfg.IndexName),
+				Config:     &cfg,
+				TikaClient: tikaClient,
+				IntervalHelper: scrapers.IntervalHelper{
+					Interval: org.IndexReposInterval,
+				},
+				Embedder: embedConfig,
+			})
+		}
+	}
+
+	// Auto-discover repositories in configured GitHub orgs/users.
+	for name, org := range cfg.GithubOrgs {
+		if !org.IndexRepos {
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		gc := scrapers.GithubClientFromOwner(&cfg, "github.com")
+		repos, err := scrapers.ListGithubOwnerRepos(ctx, gc, org.Owner, org.IsUser)
+		cancel()
+		if err != nil {
+			log.Fatalf("Failed to list GitHub repos for %q: %v", name, err)
+		}
+
+		log.Printf("Checking jobs for %d repos found in GitHub org %q", len(repos), name)
+
+		for _, repo := range repos {
+			repoPath := repo.GetFullName()
+
+			if len(org.IndexReposExcludeGlob) > 0 && scrapers.AnyGlobMatches(org.IndexReposExcludeGlob, repoPath) {
+				log.Printf("Skipping %q due to index_repos_exclude match", repoPath)
+				continue
+			}
+			if len(org.IndexReposIncludeGlob) > 0 && !scrapers.AnyGlobMatches(org.IndexReposIncludeGlob, repoPath) {
+				log.Printf("Skipping %q as it is not in index_repos_include match", repoPath)
+				continue
+			}
+
+			scraperJobs = append(scraperJobs, &scrapers.ScrapeGitJob{
+				Name:  repoPath,
+				Forge: scrapers.ForgeGitHub,
+				Repo: config.Repository{
+					URL:             repo.GetCloneURL(),
+					IgnoreIssuesPRs: true,
+					IsWiki:          false,
+					Interval:        org.IndexReposInterval,
+					PermissionTag:   scrapers.Cascade(org.IndexReposPermissionTagOverride, org.PermissionTag),
+				},
+				Index:      client.Index(cfg.IndexName),
+				Config:     &cfg,
+				TikaClient: tikaClient,
+				IntervalHelper: scrapers.IntervalHelper{
+					Interval: org.IndexReposInterval,
+				},
+				Embedder: embedConfig,
+			})
+		}
+	}
+
 	if len(scraperJobs) != initializedScraperJobs {
-		log.Printf("Setting up %d new GitLab-specific jobs...", len(scraperJobs)-initializedScraperJobs)
+		log.Printf("Setting up %d new provider-specific jobs...", len(scraperJobs)-initializedScraperJobs)
 	}
 
 	setupJobs(scraperJobs[initializedScraperJobs:])

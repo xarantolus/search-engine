@@ -22,6 +22,8 @@ type Config struct {
 	GitLogins       []GitLogins            `yaml:"git_logins"`
 	Repositories    map[string]Repository  `yaml:"repositories"`
 	GitlabGroups    map[string]GitlabGroup `yaml:"gitlab_groups"`
+	GiteaOrgs       map[string]GiteaOrg    `yaml:"gitea_orgs"`
+	GithubOrgs      map[string]GithubOrg   `yaml:"github_orgs"`
 	Mounts          map[string]Mount       `yaml:"mounts"`
 	Websites        map[string]Website     `yaml:"websites"`
 	DefaultIncludes string                 `yaml:"default_includes"`
@@ -247,6 +249,51 @@ type GitlabGroup struct {
 	PermissionTag string `yaml:"permission_tag"`
 }
 
+// GiteaOrg describes a Gitea organisation or user whose repositories should
+// be auto-discovered and indexed. Mirrors GitlabGroup's shape.
+type GiteaOrg struct {
+	Host     string        `yaml:"host"`
+	Owner    string        `yaml:"owner"`
+	IsUser   bool          `yaml:"is_user"`
+	Interval time.Duration `yaml:"interval"`
+
+	IndexRepos         bool          `yaml:"index_repos"`
+	IndexReposInterval time.Duration `yaml:"index_repos_interval"`
+
+	IndexReposIncludeGlob           string `yaml:"index_repos_include"`
+	IndexReposExcludeGlob           string `yaml:"index_repos_exclude"`
+	IndexReposPermissionTagOverride string `yaml:"index_repos_permission_tag"`
+
+	IndexReposIgnoreIssuesPRs bool `yaml:"index_repos_ignore_issues_prs"`
+
+	ScrapeIssues       bool `yaml:"scrape_issues"`
+	ScrapePullRequests bool `yaml:"scrape_pull_requests"`
+
+	PermissionTag string `yaml:"permission_tag"`
+}
+
+// GithubOrg describes a GitHub organisation or user account. The GitHub API
+// host is always github.com today, so no Host field is needed.
+type GithubOrg struct {
+	Owner    string        `yaml:"owner"`
+	IsUser   bool          `yaml:"is_user"`
+	Interval time.Duration `yaml:"interval"`
+
+	IndexRepos         bool          `yaml:"index_repos"`
+	IndexReposInterval time.Duration `yaml:"index_repos_interval"`
+
+	IndexReposIncludeGlob           string `yaml:"index_repos_include"`
+	IndexReposExcludeGlob           string `yaml:"index_repos_exclude"`
+	IndexReposPermissionTagOverride string `yaml:"index_repos_permission_tag"`
+
+	IndexReposIgnoreIssuesPRs bool `yaml:"index_repos_ignore_issues_prs"`
+
+	ScrapeIssues       bool `yaml:"scrape_issues"`
+	ScrapePullRequests bool `yaml:"scrape_pull_requests"`
+
+	PermissionTag string `yaml:"permission_tag"`
+}
+
 type Repository struct {
 	URL    string `yaml:"url"`
 	IsWiki bool   `yaml:"wiki"`
@@ -467,6 +514,52 @@ func Parse(configPath string) (c Config, err error) {
 				return Config{}, fmt.Errorf("gitlab group %q has an permission tag override not used for any group: %q", name, group.IndexReposPermissionTagOverride)
 			}
 			usedPermissionTags[group.IndexReposPermissionTagOverride] = struct{}{}
+		}
+	}
+
+	for name, org := range c.GiteaOrgs {
+		if org.Host == "" {
+			return Config{}, fmt.Errorf("gitea org %q has no host", name)
+		}
+		if _, err := url.ParseRequestURI(org.Host); err != nil {
+			return Config{}, fmt.Errorf("gitea org %q has an invalid host: %w", name, err)
+		}
+		if org.Owner == "" {
+			return Config{}, fmt.Errorf("gitea org %q has no owner", name)
+		}
+		if org.PermissionTag == "" {
+			return Config{}, fmt.Errorf("gitea org %q requires permission_tag to be set", name)
+		}
+		if _, ok := availablePermissionTags[org.PermissionTag]; !ok {
+			return Config{}, fmt.Errorf("gitea org %q has an permission tag not used for any group: %q", name, org.PermissionTag)
+		}
+		usedPermissionTags[org.PermissionTag] = struct{}{}
+
+		if org.IndexReposPermissionTagOverride != "" {
+			if _, ok := availablePermissionTags[org.IndexReposPermissionTagOverride]; !ok {
+				return Config{}, fmt.Errorf("gitea org %q has an permission tag override not used for any group: %q", name, org.IndexReposPermissionTagOverride)
+			}
+			usedPermissionTags[org.IndexReposPermissionTagOverride] = struct{}{}
+		}
+	}
+
+	for name, org := range c.GithubOrgs {
+		if org.Owner == "" {
+			return Config{}, fmt.Errorf("github org %q has no owner", name)
+		}
+		if org.PermissionTag == "" {
+			return Config{}, fmt.Errorf("github org %q requires permission_tag to be set", name)
+		}
+		if _, ok := availablePermissionTags[org.PermissionTag]; !ok {
+			return Config{}, fmt.Errorf("github org %q has an permission tag not used for any group: %q", name, org.PermissionTag)
+		}
+		usedPermissionTags[org.PermissionTag] = struct{}{}
+
+		if org.IndexReposPermissionTagOverride != "" {
+			if _, ok := availablePermissionTags[org.IndexReposPermissionTagOverride]; !ok {
+				return Config{}, fmt.Errorf("github org %q has an permission tag override not used for any group: %q", name, org.IndexReposPermissionTagOverride)
+			}
+			usedPermissionTags[org.IndexReposPermissionTagOverride] = struct{}{}
 		}
 	}
 

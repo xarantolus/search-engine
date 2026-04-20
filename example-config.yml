@@ -137,6 +137,45 @@ mounts:
     permission_tag: "SOMEORG-Sharepoint"
 
 
+# Gitea organisations or user accounts. Works like gitlab_groups but against
+# a self-hosted Gitea instance. Requires a matching git_logins entry for the
+# instance host so issues, PRs and auto-discovered repos can be cloned.
+# gitea_orgs:
+#   my_name:
+#     # Base URL of the Gitea instance. Must parse as an absolute URL.
+#     host: http://gitea.example.com:3000/
+#     # Org name (group) or username.
+#     owner: my_name
+#     # Set to true to treat `owner` as a username and list their repos via
+#     # the authenticated /user/repos endpoint (so private repos owned by
+#     # the token holder are included).
+#     is_user: true
+#     scrape_issues: true
+#     scrape_pull_requests: true
+#     interval: 30m
+#     permission_tag: "Gitea"
+#     # Auto-discover and clone all repos in the org.
+#     index_repos: true
+#     index_repos_interval: 4h
+#     # Optional glob filters (matched against "owner/reponame"):
+#     # index_repos_include: "*"
+#     # index_repos_exclude: "*confidential*,*backup*"
+#     index_repos_permission_tag: "Gitea"
+
+# GitHub organisations or user accounts (github.com only). Requires a
+# git_logins entry for "github.com".
+# github_orgs:
+#   my-org:
+#     owner: my-org
+#     is_user: false
+#     scrape_issues: true
+#     scrape_pull_requests: true
+#     interval: 30m
+#     permission_tag: "Github"
+#     index_repos: true
+#     index_repos_interval: 4h
+#     index_repos_permission_tag: "Github"
+
 gitlab_groups:
   SOMEORG:
     host: https://gitlab.example.com

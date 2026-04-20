@@ -30,6 +30,12 @@ type ScrapeGitJob struct {
 
 	GitLabID int64
 
+	// Forge is the kind of hosting platform the repo is served from. Zero
+	// value means "gitlab" (back-compat with every existing call site).
+	// Supported: "", "gitlab", "gitea", "github". Controls whether Setup
+	// performs the GitLab project lookup and which file-URL shape Run uses.
+	Forge string
+
 	TikaClient *tika.Client
 	Index      meilisearch.IndexManager
 
@@ -40,6 +46,18 @@ type ScrapeGitJob struct {
 	tempDir string
 
 	IntervalHelper
+}
+
+const (
+	ForgeGitLab = "gitlab"
+	ForgeGitea  = "gitea"
+	ForgeGitHub = "github"
+)
+
+// isGitLabForge reports whether the job targets a GitLab host — including
+// the zero-value default, which historically meant "gitlab".
+func (s *ScrapeGitJob) isGitLabForge() bool {
+	return s.Forge == "" || s.Forge == ForgeGitLab
 }
 
 func (s *ScrapeGitJob) DisplayName() string {
@@ -66,7 +84,7 @@ func (s *ScrapeGitJob) Setup() (err error) {
 		}
 	}
 
-	if s.GitLabID != 0 || s.Repo.IsWiki {
+	if s.GitLabID != 0 || s.Repo.IsWiki || !s.isGitLabForge() {
 		return nil
 	}
 
@@ -240,7 +258,7 @@ func (s *ScrapeGitJob) Run() (err error) {
 		if s.Repo.IsWiki {
 			url, err = pathToWikiURL(wikiURL, relPath)
 		} else {
-			url, err = gitlabFilePathToURL(repoUrl.String(), string(branchName), relPath)
+			url, err = repoFilePathToURL(s.Forge, repoUrl.String(), string(branchName), relPath)
 		}
 		if err != nil {
 			logger.Printf("Failed to get URL for %s: %v", path, err)
@@ -349,6 +367,42 @@ func gitlabFilePathToURL(repoBaseURL, branchName, p string) (out string, err err
 	url.Path = strings.ReplaceAll(filepath.Join(url.Path, "-", "blob", branchName, p), "\\", "/")
 
 	return url.String(), nil
+}
+
+// giteaFilePathToURL builds a Gitea file web URL. Shape:
+//
+//	<host>/<owner>/<repo>/src/branch/<branch>/<path>
+func giteaFilePathToURL(repoBaseURL, branchName, p string) (out string, err error) {
+	u, err := url.Parse(strings.TrimSuffix(repoBaseURL, ".git"))
+	if err != nil {
+		return
+	}
+	u.Path = strings.ReplaceAll(filepath.Join(u.Path, "src", "branch", branchName, p), "\\", "/")
+	return u.String(), nil
+}
+
+// githubFilePathToURL builds a GitHub file web URL. Shape:
+//
+//	<host>/<owner>/<repo>/blob/<branch>/<path>
+func githubFilePathToURL(repoBaseURL, branchName, p string) (out string, err error) {
+	u, err := url.Parse(strings.TrimSuffix(repoBaseURL, ".git"))
+	if err != nil {
+		return
+	}
+	u.Path = strings.ReplaceAll(filepath.Join(u.Path, "blob", branchName, p), "\\", "/")
+	return u.String(), nil
+}
+
+// repoFilePathToURL dispatches to the right per-forge URL builder.
+func repoFilePathToURL(forge, repoBaseURL, branchName, p string) (string, error) {
+	switch forge {
+	case ForgeGitea:
+		return giteaFilePathToURL(repoBaseURL, branchName, p)
+	case ForgeGitHub:
+		return githubFilePathToURL(repoBaseURL, branchName, p)
+	default:
+		return gitlabFilePathToURL(repoBaseURL, branchName, p)
+	}
 }
 
 func pathToWikiURL(repoBaseURL, relPath string) (out string, err error) {

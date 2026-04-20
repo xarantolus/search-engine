@@ -129,18 +129,16 @@ async function fetchResults() {
 			signal: abortController.signal
 		})
 		if (!res.ok) {
-			let dec : any;
+			let dec: any = null
 			try {
 				dec = await res.json()
 			} catch (err: any) {
 				console.error(err)
 			}
-			if (res.status === 403) {
-				if (dec.group_error) {
-					throw new Error(dec.message)
-				}
+			if (res.status === 403 && dec?.group_error) {
+				throw new Error(dec.message)
 			}
-			if (dec.error) {
+			if (dec?.error) {
 				throw new Error(dec.error)
 			}
 

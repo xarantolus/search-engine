@@ -101,7 +101,8 @@ func (s *Server) Search(c *fiber.Ctx) (err error) {
 	} else {
 		userInfo, err := s.UserInfo(c)
 		if err != nil {
-			return c.Status(fiber.StatusUnauthorized).SendString("not logged in")
+			s.Logger.Printf("search: UserInfo failed: %v", err)
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
 		}
 		if len(userInfo.PermissionGroups) == 0 {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{

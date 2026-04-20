@@ -144,7 +144,7 @@ func (s *Server) UserInfo(c *fiber.Ctx, keyOverride ...string) (UserInfo, error)
 func (s *Server) LoginMiddleware(c *fiber.Ctx) error {
 	reject := func() error {
 		if strings.HasPrefix(c.Path(), "/api") {
-			return c.SendStatus(fiber.StatusUnauthorized)
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not logged in"})
 		}
 		return c.Redirect(fmt.Sprintf("/login?redirect=%s", url.QueryEscape(c.Path())))
 	}

@@ -36,7 +36,7 @@ func (e *ExpirationJob) Run() error {
 
 	logger.Printf("Deleting documents older than %s", olderDuration)
 
-	task, err := e.Index.DeleteDocumentsByFilter(filter)
+	task, err := e.Index.DeleteDocumentsByFilter(filter, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete old documents: %w", err)
 	}

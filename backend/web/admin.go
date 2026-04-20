@@ -104,7 +104,7 @@ func (s *Server) DeleteDocument(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Document ID is required"})
 	}
 
-	_, err = s.Index.DeleteDocument(docID)
+	_, err = s.Index.DeleteDocument(docID, nil)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to delete document"})
 	}

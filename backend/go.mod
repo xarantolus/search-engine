@@ -6,7 +6,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.11.0
 	github.com/gofiber/fiber/v2 v2.52.9
 	github.com/gofiber/storage/sqlite3 v1.3.8
-	github.com/meilisearch/meilisearch-go v0.34.1
+	github.com/meilisearch/meilisearch-go v0.36.2
 	github.com/openai/openai-go v1.12.0
 	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745
 	gitlab.com/gitlab-org/api/client-go v0.159.0
@@ -21,6 +21,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect

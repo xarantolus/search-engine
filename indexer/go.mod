@@ -12,7 +12,7 @@ require (
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/hhatto/gocloc v0.7.0
 	github.com/klauspost/compress v1.18.1
-	github.com/meilisearch/meilisearch-go v0.34.1
+	github.com/meilisearch/meilisearch-go v0.36.2
 	github.com/mitchellh/copystructure v1.2.0
 	github.com/openai/openai-go v1.12.0
 	github.com/saracen/walker v0.1.4
@@ -38,6 +38,7 @@ require (
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect

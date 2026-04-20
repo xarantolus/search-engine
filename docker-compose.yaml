@@ -6,7 +6,7 @@ networks:
 
 services:
   meilisearch:
-    image: getmeili/meilisearch:v1.24
+    image: getmeili/meilisearch:v1.42.1
     volumes:
       - ./meili_data:/meili_data:Z
     restart: unless-stopped

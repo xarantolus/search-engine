@@ -122,8 +122,12 @@ func (g *gitlabAuth) LoginCallback(c *fiber.Ctx) error {
 	}
 
 	state := c.Query("state")
-	savedState, _ := sess.Get(gitlabSessionOAuthState).(string)
-	if savedState == "" || savedState != state {
+	rawSavedState := sess.Get(gitlabSessionOAuthState)
+	if rawSavedState == nil {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	savedState, ok := rawSavedState.(string)
+	if !ok || savedState != state {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
 	verifier, _ := sess.Get(gitlabSessionPKCEVerifier).(string)

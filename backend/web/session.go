@@ -129,9 +129,10 @@ func (s *Server) UserInfo(c *fiber.Ctx, keyOverride ...string) (UserInfo, error)
 	if err != nil {
 		return info, err
 	}
-	if len(info.PermissionGroups) == 0 {
-		return info, fmt.Errorf("You are not permitted to view any files. Ask an administrator for access.")
-	}
+	// UserInfo returns identity; consumers that need non-empty groups
+	// (e.g. the search handler) check for themselves and return a
+	// purpose-built error. A blanket check here would also block admins
+	// with no assigned groups from reaching /admin to grant themselves one.
 	if len(keyOverride) == 0 {
 		c.Locals(localsKeyUserInfoCtx, info)
 	}

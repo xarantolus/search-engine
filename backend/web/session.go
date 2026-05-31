@@ -213,7 +213,8 @@ func (s *Server) LoginCallback(c *fiber.Ctx) error {
 		return fmt.Errorf("failed to get logged in gitlab user info: %w", err)
 	}
 
-	groupMember, _, err := gitlabClient.GroupMembers.GetGroupMember(strconv.FormatInt(s.GitLab.AllowedGitLabGroupID, 10), gitlabUser.ID, nil)
+	// also check inherited groups
+	groupMember, _, err := gitlabClient.GroupMembers.GetInheritedGroupMember(strconv.FormatInt(s.GitLab.AllowedGitLabGroupID, 10), gitlabUser.ID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get group member info: %w", err)
 	}
